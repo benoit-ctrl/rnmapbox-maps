@@ -8,7 +8,8 @@ import { coordinates } from '@rnmapbox/maps';
 coordinates
 
 ```
-Coorinates sent by locationManager
+Geographic coordinates sent by locationManager.Fields:Note: heading (compass direction the device is facing) and course (direction of travel) are distinct values.
+On Android, both currently return the same value due to issue #1213.
 
 
 

@@ -28,7 +28,15 @@ export const LocationModuleEventEmitter =
     : null;
 
 /**
- * Location sent by locationManager
+ * Location object sent by locationManager, containing geographic coordinates and a timestamp.
+ *
+ * - coords: a Coordinates object with latitude, longitude, altitude, accuracy, heading, course, and speed
+ * - timestamp: Unix timestamp in milliseconds indicating when the location was determined
+ *
+ * The native SDK requests location with high accuracy by default:
+ * iOS uses kCLLocationAccuracyBest (2nd highest of 6 accuracy levels),
+ * Android uses AccuracyLevel.HIGH (2nd highest of 5 levels) with a 1000ms update interval.
+ * These accuracy settings are not configurable from the React Native side.
  */
 export interface Location {
   coords: Coordinates;
@@ -36,7 +44,20 @@ export interface Location {
 }
 
 /**
- * Coorinates sent by locationManager
+ * Geographic coordinates sent by locationManager.
+ *
+ * Fields:
+ * - latitude (number): The latitude in degrees.
+ * - longitude (number): The longitude in degrees.
+ * - altitude (number | undefined): The altitude in meters above sea level.
+ * - accuracy (number | undefined): The radius of uncertainty for the location in meters (horizontal accuracy).
+ * - heading (number | undefined): The direction the device is pointing relative to true north, in degrees (compass).
+ *   On Android, this incorrectly reports the course value due to a known bug (see https://github.com/rnmapbox/maps/issues/1213).
+ * - course (number | undefined): The direction the device is traveling relative to due north, in degrees.
+ * - speed (number | undefined): The instantaneous speed in meters per second.
+ *
+ * Note: heading (compass direction the device is facing) and course (direction of travel) are distinct values.
+ * On Android, both currently return the same value due to issue #1213.
  */
 interface Coordinates {
   /**
@@ -80,7 +101,21 @@ interface Coordinates {
 }
 
 /**
- * LocationManager is a singleton, see `locationManager`
+ * Singleton class that wraps the native Mapbox location manager.
+ *
+ * Manages GPS location updates and distributes them to registered listeners.
+ * Automatically pauses location updates when the app moves to the background
+ * and resumes when returning to the foreground (unless requestsAlwaysUse is enabled).
+ * Caches the last known location for immediate access.
+ *
+ * Use the default export locationManager rather than instantiating this class directly.
+ *
+ * @example
+ * import locationManager from '@rnmapbox/maps/modules/location/locationManager';
+ *
+ * locationManager.addListener((location) => {
+ *   console.log(location.coords.latitude, location.coords.longitude);
+ * });
  */
 export class LocationManager {
   _listeners: ((location: Location) => void)[];
@@ -105,6 +140,21 @@ export class LocationManager {
     );
   }
 
+  /**
+   * Returns the last known location from the cache. If no cached location is available,
+   * queries the native location manager for the most recent location.
+   *
+   * This method does not activate GPS or start location updates. To receive
+   * continuous location updates, use addListener instead.
+   *
+   * @return {Promise<Location | null>} The last known location, or null if unavailable.
+   *
+   * @example
+   * const location = await locationManager.getLastKnownLocation();
+   * if (location) {
+   *   console.log(location.coords.latitude, location.coords.longitude);
+   * }
+   */
   async getLastKnownLocation() {
     if (!this._lastKnownLocation) {
       let lastKnownLocation;
@@ -127,6 +177,21 @@ export class LocationManager {
     return this._lastKnownLocation;
   }
 
+  /**
+   * Registers a callback to receive location updates. Automatically starts
+   * location updates if not already listening.
+   *
+   * If a cached location is available, the listener is called immediately
+   * with the cached value.
+   *
+   * @param {Function} listener Callback that receives a Location object on each update.
+   *
+   * @example
+   * const onLocation = (location) => {
+   *   console.log(location.coords.latitude, location.coords.longitude);
+   * };
+   * locationManager.addListener(onLocation);
+   */
   addListener(listener: (location: Location) => void) {
     if (!this._isListening) {
       this.start();
@@ -140,6 +205,15 @@ export class LocationManager {
     }
   }
 
+  /**
+   * Removes a previously registered location listener. If no listeners remain,
+   * location updates are automatically stopped.
+   *
+   * @param {Function} listener The listener callback to remove.
+   *
+   * @example
+   * locationManager.removeListener(onLocation);
+   */
   removeListener(listener: (location: Location) => void) {
     this._listeners = this._listeners.filter((l) => l !== listener);
     if (this._listeners.length === 0) {
@@ -147,6 +221,12 @@ export class LocationManager {
     }
   }
 
+  /**
+   * Removes all registered location listeners and stops location updates.
+   *
+   * @example
+   * locationManager.removeAllListeners();
+   */
   removeAllListeners() {
     this._listeners = [];
     this.stop();
@@ -164,6 +244,15 @@ export class LocationManager {
     }
   }
 
+  /**
+   * Starts listening for native location updates. This is called automatically
+   * by addListener when the first listener is registered, so you
+   * typically do not need to call it directly.
+   *
+   * @param {number} displacement Minimum distance in meters the device must move
+   *   before a location update is generated. Defaults to the value set by
+   *   setMinDisplacement, or -1 (no minimum) if not set.
+   */
   start(displacement = -1) {
     let validDisplacement = 1;
     if (
@@ -198,6 +287,11 @@ export class LocationManager {
     }
   }
 
+  /**
+   * Stops listening for native location updates. Called automatically when
+   * all listeners are removed or when the app moves to the background
+   * (unless requestsAlwaysUse is enabled).
+   */
   stop() {
     MapboxLocationManager.stop();
 
@@ -208,11 +302,32 @@ export class LocationManager {
     this._isListening = false;
   }
 
+  /**
+   * Sets the minimum distance in meters the device must move before a location
+   * update is generated. Defaults to 0 (no minimum, updates on every change).
+   *
+   * Maps to distanceFilter on iOS and displacement on Android.
+   *
+   * @param {number} minDisplacement The minimum displacement in meters.
+   *
+   * @example
+   * locationManager.setMinDisplacement(10); // Only update after moving 10 meters
+   */
   setMinDisplacement(minDisplacement: number) {
     this._minDisplacement = minDisplacement;
     MapboxLocationManager.setMinDisplacement(minDisplacement);
   }
 
+  /**
+   * Sets whether the app should request "always" location permission and continue
+   * receiving updates in the background.
+   *
+   * Note: This is not implemented in Mapbox Maps SDK v11 and is currently a no-op
+   * on both iOS and Android.
+   *
+   * @platform ios
+   * @param {boolean} requestsAlwaysUse Whether to request always-on location.
+   */
   setRequestsAlwaysUse(requestsAlwaysUse: boolean) {
     MapboxLocationManager.setRequestsAlwaysUse(requestsAlwaysUse);
     this._requestsAlwaysUse = requestsAlwaysUse;
@@ -233,12 +348,12 @@ export class LocationManager {
 
   /**
    * Sets the period at which location events will be sent over the React Native bridge.
-   * The default is 0, aka no limit. [V10, iOS only]
+   * The default is 0, which means no throttling (every update is sent immediately).
    *
    * @example
    * locationManager.setLocationEventThrottle(500);
    *
-   * @param {Number} throttleValue event throttle value in ms.
+   * @param {number} throttleValue Event throttle value in milliseconds. Set to 0 to disable throttling.
    * @return {void}
    */
   setLocationEventThrottle(throttleValue: number) {
